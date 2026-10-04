@@ -151,6 +151,9 @@ function UserMenu() {
             <div className="muted small truncate">{user.email}</div>
             {user.roleName && <span className="chip" style={{ marginTop: 6 }}>{user.roleName}</span>}
           </div>
+          <Link href="/profile" role="menuitem">
+            My profile
+          </Link>
           {can('own-brands.read') && (
             <Link href="/dashboard" role="menuitem">
               My brands

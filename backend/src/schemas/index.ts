@@ -39,6 +39,8 @@ export class User {
   @Prop({ type: Types.ObjectId, ref: 'Role', default: null }) role: Types.ObjectId | null;
   @Prop({ default: true }) active: boolean;
   @Prop({ type: Date, default: null }) lastLoginAt: Date | null;
+  /** Sessions issued before this moment are rejected (set whenever the password changes). */
+  @Prop({ type: Date, default: null }) passwordChangedAt: Date | null;
 }
 export type UserDocument = HydratedDocument<User>;
 export const UserSchema = SchemaFactory.createForClass(User);

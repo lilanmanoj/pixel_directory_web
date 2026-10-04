@@ -44,14 +44,17 @@ export class AuthGuard implements CanActivate {
       req.cookies?.[config.cookieName] ?? (header?.startsWith('Bearer ') ? header.slice(7) : undefined);
     if (!token) return null;
 
-    let sub: string;
+    let payload: { sub: string; iat?: number };
     try {
-      sub = (await this.jwt.verifyAsync<{ sub: string }>(token)).sub;
+      payload = await this.jwt.verifyAsync<{ sub: string; iat?: number }>(token);
     } catch {
       return null;
     }
-    const user = await this.users.findById(sub).lean();
+    const user = await this.users.findById(payload.sub).lean();
     if (!user || !user.active) return null;
+    if (user.passwordChangedAt && (payload.iat ?? 0) < Math.floor(user.passwordChangedAt.getTime() / 1000)) {
+      return null; // issued before the latest password change
+    }
     return buildAuthUser(user, user.role ? await this.roles.findById(user.role).lean() : null);
   }
 }

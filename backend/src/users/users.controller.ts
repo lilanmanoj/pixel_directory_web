@@ -1,6 +1,17 @@
-import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Patch, Query } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  ConflictException,
+  Controller,
+  Get,
+  NotFoundException,
+  Param,
+  Patch,
+  Query,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { IsBoolean, IsMongoId, IsOptional, ValidateIf } from 'class-validator';
+import bcrypt from 'bcryptjs';
+import { IsBoolean, IsEmail, IsMongoId, IsOptional, IsString, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import { Model } from 'mongoose';
 import { CurrentUser, Permissions } from '../common/decorators.js';
 import type { AuthUser } from '../common/decorators.js';
@@ -9,6 +20,10 @@ import { escapeRegex, paged, paging, ParseObjectIdPipe } from '../common/utils.j
 import { Role, User } from '../schemas/index.js';
 
 class UpdateUserDto {
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(80) name?: string;
+  @IsOptional() @IsEmail() @MaxLength(160) email?: string;
+  /** Sets a new password and signs the user out of existing sessions. */
+  @IsOptional() @IsString() @MinLength(8) @MaxLength(128) password?: string;
   /** null removes the role (user keeps an account with no permissions). */
   @IsOptional() @ValidateIf((_, v) => v !== null) @IsMongoId() roleId?: string | null;
   @IsOptional() @IsBoolean() active?: boolean;
@@ -58,10 +73,24 @@ export class UsersController {
     if (id === me.id && (dto.active === false || dto.roleId !== undefined)) {
       throw new BadRequestException('You cannot change your own role or deactivate yourself');
     }
+    if (id === me.id && dto.password) {
+      throw new BadRequestException('Change your own password from your profile page');
+    }
     if (dto.roleId && !(await this.roles.exists({ _id: dto.roleId, deletedAt: null }))) {
       throw new BadRequestException('Role not found');
     }
+    const email = dto.email?.trim().toLowerCase();
+    if (email && (await this.users.exists({ email, _id: { $ne: id } }))) {
+      throw new ConflictException('Another account already uses this email');
+    }
+
     const update: Record<string, unknown> = {};
+    if (dto.name !== undefined) update.name = dto.name.trim();
+    if (email) update.email = email;
+    if (dto.password) {
+      update.passwordHash = await bcrypt.hash(dto.password, 12);
+      update.passwordChangedAt = new Date();
+    }
     if (dto.roleId !== undefined) update.role = dto.roleId;
     if (dto.active !== undefined) update.active = dto.active;
 

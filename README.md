@@ -44,6 +44,7 @@ A scrollable web directory of brands and advertisements. Brands appear as cards 
 
 **Accounts and access**
 - Sign up and sign in. New sign-ups get the role marked as the *sign-up default*.
+- **My profile** (every signed-in user): change your own name, email and password. Changing your email or password requires your current password. A password change signs you out on your other devices.
 - **Dynamic role-based access**: admins create, edit, **soft-delete** and restore roles, and decide which permissions each role has. They can also create custom permission keys and assign a role to each user.
 
 **Admin**
@@ -51,7 +52,7 @@ A scrollable web directory of brands and advertisements. Brands appear as cards 
 - Brands: list, search and filter, create, edit, **activate or deactivate**, delete, **resize freely**, **allocate to users**, and view **per-brand click metrics**.
 - Card sizes and **price tiers**.
 - Shared metadata field definitions.
-- Users: assign roles, activate or deactivate accounts.
+- Users: edit any user's name, email and password, assign roles, activate or deactivate accounts. Setting a new password signs that user out everywhere.
 - Payments: list of payments and total revenue.
 
 **Brand owners** (users allocated to a brand)
@@ -105,7 +106,7 @@ A scrollable web directory of brands and advertisements. Brands appear as cards 
 ├── frontend/                   # Next.js app
 │   ├── Dockerfile
 │   └── src/
-│       ├── app/                # routes: /, /signin, /signup, /dashboard/*, /admin/*
+│       ├── app/                # routes: /, /signin, /signup, /profile, /dashboard/*, /admin/*
 │       ├── components/         # BrandGrid, BrandDialog, BrandForm, ClicksChart, Header, …
 │       └── lib/                # api client, auth context, theme, types
 └── deploy/                     # LIVE deployment
@@ -231,7 +232,7 @@ Every user has **one role**. A role is a named list of permission keys. Roles ar
 - **Soft-delete** a role. Its users immediately lose those permissions, but the role stays in the database. **Restore** gives them back. The system *Admin* role and the current sign-up default can't be deleted.
 - **Sign-up default**: exactly one role is given to new sign-ups (by default, *Member*).
 - **Custom permissions**: you can add new permission keys (for example `reports.export`) and assign them to roles. The built-in keys below are the ones the API enforces. Custom keys are for your own conventions or for features you add later.
-- **Assign roles to users** under **Admin → Users**. Admins can't change their own role or deactivate themselves, so they can't lock themselves out.
+- **Edit users and assign roles** under **Admin → Users**. Admins can't change their own role or deactivate themselves, so they can't lock themselves out. They change their own password from **My profile**, like everyone else.
 
 ### Built-in permissions
 
@@ -250,7 +251,7 @@ Every user has **one role**. A role is a named list of permission keys. Roles ar
 | `metrics.view` | Admin overview and metrics for every brand |
 | `card-sizes.manage` | Manage card sizes and prices |
 | `metadata-fields.manage` | Manage shared metadata fields |
-| `users.manage` | Manage users (roles, active flag) |
+| `users.manage` | Manage users (details, password, role, active flag) |
 | `roles.manage` | Manage roles and permissions |
 | `payments.create` | Pay to change card sizes |
 | `payments.view` | See all payments |
@@ -317,6 +318,7 @@ All routes are under `/api`. Auth uses the `pd_token` httpOnly cookie that sign-
 | `GET /health` | public | Liveness + DB status |
 | `POST /auth/signup` · `POST /auth/signin` · `POST /auth/signout` | public | Sessions |
 | `GET /auth/me` | public | Current user + permissions (or `null`) |
+| `PATCH /auth/me` | signed in | Update own `name`, `email`, `newPassword` (`currentPassword` required for email/password) |
 | `GET /public/brands?page&limit&seed&q` | public | Shuffled feed (`seed`) or search (`q`) |
 | `GET /public/brands/:idOrSlug` | public | Brand details (active brands only) |
 | `POST /public/brands/:id/click` | public | Record a click |
@@ -330,7 +332,7 @@ All routes are under `/api`. Auth uses the `pd_token` httpOnly cookie that sign-
 | `GET /admin/payments?status` | `payments.view` | All payments + revenue |
 | `GET/POST/PATCH/DELETE /admin/card-sizes[/:id]` | `card-sizes.manage` | Price tiers |
 | `GET/POST/PATCH/DELETE /admin/metadata-fields[/:id]` | `metadata-fields.manage` | Shared fields |
-| `GET /admin/users` · `PATCH /admin/users/:id` · `GET /admin/users/roles` | `users.manage` | Users & role assignment |
+| `GET /admin/users` · `PATCH /admin/users/:id` · `GET /admin/users/roles` | `users.manage` | Users: `name`, `email`, `password`, `roleId`, `active` |
 | `GET /admin/users/lookup?q` | `brands.assign` | User search when allocating brands |
 | `GET/POST/PATCH/DELETE /admin/roles[/:id]` · `POST /admin/roles/:id/restore` | `roles.manage` | Roles (soft delete/restore) |
 | `GET/POST/PATCH/DELETE /admin/permissions[/:id]` | `roles.manage` | Permission catalog |
@@ -446,6 +448,8 @@ docker run --rm -v pixel-directory-app_uploads:/data -v "$PWD":/out alpine tar c
 ## Security notes
 
 - Passwords are hashed with bcrypt (cost 12). Sessions are signed JWTs in an `httpOnly`, `SameSite=Lax` cookie, `Secure` in production.
+- Changing a password (by the user or by an admin) cancels every session issued before the change. When users change their own password, the device they used stays signed in.
+- Changing your own email or password requires your current password.
 - Every request body is validated with whitelisting (unknown fields are dropped). For example, an owner can't change `cardSize` or `active` through the owner endpoint.
 - Image and link URLs are restricted to `http(s)` or the app's own `/uploads/…` paths, so `javascript:` URLs are rejected. Uploads are checked by their **file signature** (JPG, PNG, GIF, WEBP, AVIF), get random names, and are served with `nosniff`.
 - Search input is regex-escaped before it reaches MongoDB.
@@ -464,7 +468,8 @@ docker run --rm -v pixel-directory-app_uploads:/data -v "$PWD":/out alpine tar c
 | Caddy keeps restarting | `DOMAIN` or `ACME_EMAIL` is missing, or DNS doesn't point to the host yet. Check `docker compose … logs caddy`. |
 | App host can't connect to MongoDB | Check `MONGO_BIND_IP` (private IP), the DB host firewall, and the `authSource` and password in `MONGODB_URI`. URL-encode special characters in the password. |
 | No demo brands locally | Demo data only loads into an empty database. Run `docker compose down -v`, then `up` again. |
-| Forgot the admin password | In mongosh, delete that user (`db.users.deleteOne({ email: '…' })`) and restart the backend. If no user has the Admin role any more, the seeder creates `ADMIN_EMAIL` with `ADMIN_PASSWORD`. Their brand allocations must be redone. |
+| A user forgot their password | An admin opens **Admin → Users → Edit** and sets a new one. |
+| Forgot the admin password | Another admin can reset it from **Admin → Users**. If there is none, in mongosh, delete that user (`db.users.deleteOne({ email: '…' })`) and restart the backend. If no user has the Admin role any more, the seeder creates `ADMIN_EMAIL` with `ADMIN_PASSWORD`. Their brand allocations must be redone. |
 
 ---
 
@@ -473,5 +478,5 @@ docker run --rm -v pixel-directory-app_uploads:/data -v "$PWD":/out alpine tar c
 - **Payments use a mock gateway.** Connect a real provider before charging customers (see [Payments](#card-sizes-prices-and-payments)).
 - **Uploads are stored on the app host's disk.** To run more than one backend instance, move uploads to object storage (S3, R2, GCS) or a shared volume.
 - **Click counting has no rate limit or bot filtering.** Add a rate limit at the proxy or in the API if exact numbers matter.
-- No email verification or password reset yet.
+- No email verification or "forgot password" email yet. Admins can set a new password for a user from **Admin → Users**.
 - Search uses case-insensitive substring matching, which is fine for thousands of brands. For much larger data, switch to MongoDB Atlas Search or a text index.

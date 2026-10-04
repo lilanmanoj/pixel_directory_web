@@ -3,7 +3,9 @@ import {
   ConflictException,
   Controller,
   Get,
+  BadRequestException,
   HttpCode,
+  Patch,
   Post,
   Res,
   UnauthorizedException,
@@ -11,7 +13,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import bcrypt from 'bcryptjs';
-import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import type { Response } from 'express';
 import { Model } from 'mongoose';
 import { buildAuthUser } from '../common/auth.guard.js';
@@ -29,6 +31,14 @@ class SignUpDto {
 class SignInDto {
   @IsEmail() email: string;
   @IsString() @MaxLength(128) password: string;
+}
+
+class UpdateProfileDto {
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(80) name?: string;
+  @IsOptional() @IsEmail() @MaxLength(160) email?: string;
+  @IsOptional() @IsString() @MinLength(8) @MaxLength(128) newPassword?: string;
+  /** Required when changing email or password. */
+  @IsOptional() @IsString() @MaxLength(128) currentPassword?: string;
 }
 
 @Controller('auth')
@@ -85,6 +95,39 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user?: AuthUser) {
     return { user: user ?? null };
+  }
+
+  /** The signed-in user's own profile. Email and password changes need the current password. */
+  @Patch('me')
+  async updateMe(
+    @CurrentUser() me: AuthUser,
+    @Body() dto: UpdateProfileDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const user = await this.users.findById(me.id).select('+passwordHash');
+    if (!user) throw new UnauthorizedException('Please sign in');
+
+    const email = dto.email?.trim().toLowerCase();
+    const emailChanged = !!email && email !== user.email;
+    if (emailChanged || dto.newPassword) {
+      if (!dto.currentPassword || !(await bcrypt.compare(dto.currentPassword, user.passwordHash))) {
+        throw new BadRequestException('Your current password is incorrect');
+      }
+    }
+    if (emailChanged && (await this.users.exists({ email, _id: { $ne: user._id } }))) {
+      throw new ConflictException('Another account already uses this email');
+    }
+
+    if (dto.name !== undefined) user.name = dto.name.trim();
+    if (emailChanged) user.email = email!;
+    if (dto.newPassword) {
+      user.passwordHash = await bcrypt.hash(dto.newPassword, 12);
+      user.passwordChangedAt = new Date();
+    }
+    await user.save();
+    // Other sessions are now invalid; keep this one signed in with a fresh token.
+    if (dto.newPassword) await this.issueCookie(res, String(user._id));
+    return buildAuthUser(user, user.role ? await this.roles.findById(user.role).lean() : null);
   }
 
   private async issueCookie(res: Response, userId: string) {
