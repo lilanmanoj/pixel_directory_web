@@ -1,0 +1,38 @@
+# Production DATABASE stack — run this on its own host (or VM), separate from the app.
+#
+#   cd deploy && cp .env.db.example .env.db && nano .env.db
+#   docker compose -f docker-compose.db.yml --env-file .env.db up -d
+#
+# Bind MONGO_BIND_IP to the host's PRIVATE address (VPC / LAN / WireGuard) and
+# firewall port 27017 so only the app host can reach it. Never expose it publicly.
+
+name: pixel-directory-db
+
+services:
+  mongo:
+    image: mongo:7
+    restart: always
+    command: ["mongod", "--auth", "--bind_ip_all"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:?Set MONGO_ROOT_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD}
+      # Used once by mongo-init/01-app-user.js to create the least-privilege app user.
+      APP_DB_NAME: ${APP_DB_NAME:-pixel_directory}
+      APP_DB_USER: ${APP_DB_USER:?Set APP_DB_USER}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD}
+    ports:
+      - "${MONGO_BIND_IP:-127.0.0.1}:${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo-data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  mongo-data:

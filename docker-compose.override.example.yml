@@ -1,0 +1,8 @@
+# Optional: publish MongoDB on the host (e.g. for MongoDB Compass).
+#   cp docker-compose.override.example.yml docker-compose.override.yml
+# Compose loads docker-compose.override.yml automatically. Pick a free port
+# with MONGO_PORT in .env if 27017 is already used by another MongoDB.
+services:
+  mongo:
+    ports:
+      - "127.0.0.1:${MONGO_PORT:-27017}:27017"

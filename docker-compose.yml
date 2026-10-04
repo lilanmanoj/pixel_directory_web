@@ -1,0 +1,57 @@
+# Local development / testing stack: MongoDB + API + web, all on one machine.
+#   docker compose up --build
+# Then open http://localhost:3000  (ports can be changed in .env — see .env.example)
+
+name: pixel-directory
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # Not published on the host by default (avoids clashing with another local
+    # MongoDB). For Compass access, see docker-compose.override.example.yml.
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/pixel_directory
+      JWT_SECRET: ${JWT_SECRET:-local-dev-secret-change-me}
+      COOKIE_SECURE: "false"
+      CORS_ORIGINS: http://localhost:${WEB_PORT:-3000}
+      SEED_ON_START: "true"
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@pixel.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@12345}
+      CURRENCY: ${CURRENCY:-USD}
+      PAYMENT_PROVIDER: mock
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "127.0.0.1:${API_PORT:-4000}:4000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:4000
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+volumes:
+  mongo-data:
+  uploads:

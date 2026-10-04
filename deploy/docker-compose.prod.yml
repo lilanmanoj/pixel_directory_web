@@ -1,0 +1,74 @@
+# Production APP stack: Caddy (automatic HTTPS) -> Next.js web + NestJS API.
+# The database is NOT part of this stack — point MONGODB_URI at a separate
+# MongoDB instance (deploy/docker-compose.db.yml on another host, or a managed
+# service such as MongoDB Atlas).
+#
+#   cd deploy && cp .env.prod.example .env && nano .env
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+
+name: pixel-directory-app
+
+services:
+  backend:
+    build: ../backend
+    restart: always
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: ${MONGODB_URI:?Set MONGODB_URI in deploy/.env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in deploy/.env}
+      JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-604800}
+      COOKIE_SECURE: "true"
+      CORS_ORIGINS: https://${DOMAIN:?Set DOMAIN in deploy/.env}
+      SEED_ON_START: "true"
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrator}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL in deploy/.env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in deploy/.env}
+      CURRENCY: ${CURRENCY:-USD}
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-mock}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-5}
+    volumes:
+      - uploads:/app/uploads
+    networks: [app]
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        BACKEND_URL: http://backend:4000
+    restart: always
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [app]
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    depends_on: [frontend, backend]
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in deploy/.env (used for TLS certificate notices)}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-5}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [app]
+    logging: *logging
+
+networks:
+  app:
+
+volumes:
+  uploads:
+  caddy-data:
+  caddy-config:
